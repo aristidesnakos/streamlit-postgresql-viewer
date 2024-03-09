@@ -15,23 +15,37 @@ connection = psycopg2.connect(
 )
 
 # Create a Streamlit app
-st.title("AWS RDS Table Viewer")
+st.title("AWS RDS Object Viewer")
 
-# Get a list of table names from the database
-with connection.cursor() as cursor:
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
-    table_names = [row[0] for row in cursor.fetchall()]
+# Create a dropdown for selecting the object type (table, sequence, or type)
+object_type = st.selectbox("Select an object type:", ["Table", "Sequence", "Type"])
 
-# Create a dropdown for selecting the table name
-table_name = st.selectbox("Select a table:", table_names)
+object_names = []
+
+# Fetch the object names based on the selected type
+if object_type == "Table":
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
+        object_names = [row[0] for row in cursor.fetchall()]
+elif object_type == "Sequence":
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema='public'")
+        object_names = [row[0] for row in cursor.fetchall()]
+elif object_type == "Type":
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT typname FROM pg_type WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')")
+        object_names = [row[0] for row in cursor.fetchall()]
+
+# Create a dropdown for selecting the object name
+object_name = st.selectbox("Select an object:", object_names)
 
 selected_fields = []
 
-# Create a UI element for selecting table fields
+# Create a UI element for selecting fields (for tables only)
 if st.button("Fetch Data"):
-    if table_name:
+    if object_type == "Table" and object_name:
         with connection.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {table_name}")
+            cursor.execute(f"SELECT * FROM {object_name}")
             data = cursor.fetchall()
 
         # Get column names (headers) from the cursor description
@@ -64,7 +78,56 @@ if st.button("Fetch Data"):
         selected = grid_response['selected_rows']
         df = pd.DataFrame(selected)
 
-        st.text("Note: The database connection will be closed when you close this app.")
+    elif object_type == "Sequence" and object_name:
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT last_value, increment_by, max_value FROM {object_name}")
+            data = cursor.fetchone()
+
+        st.write(f"Last Value: {data[0]}")
+        st.write(f"Increment By: {data[1]}")
+        st.write(f"Max Value: {data[2]}")
+
+    elif object_type == "Type" and object_name:
+        with connection.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT
+                    typname,
+                    typlen,
+                    typbyval,
+                    typcategory,
+                    CASE typcategory
+                        WHEN 'A' THEN 'Array'
+                        WHEN 'B' THEN 'Base'
+                        WHEN 'C' THEN 'Composite'
+                        WHEN 'D' THEN 'Domain'
+                        WHEN 'E' THEN 'Enum'
+                        WHEN 'P' THEN 'Pseudo'
+                        WHEN 'R' THEN 'Range'
+                        WHEN 'S' THEN 'Special'
+                        WHEN 'U' THEN 'User-defined'
+                        ELSE 'Unknown'
+                    END AS category_description
+                FROM pg_type
+                WHERE typname = '{object_name}'
+            """)
+            data = cursor.fetchone()
+
+        st.write(f"Type Name: {data[0]}")
+        st.write(f"Type Length: {data[1]}")
+        st.write(f"Type By Value: {data[2]}")
+        st.write(f"Type Category: {data[3]} ({data[4]})")
+        
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT typname, typcategory FROM pg_type WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')")
+            type_data = cursor.fetchall()
+
+        type_df = pd.DataFrame(type_data, columns=["Type Name", "Type Category"])
+        st.dataframe(type_df)
+
+    else:
+        st.warning("Please select an object type and name.")
+
+    st.text("Note: The database connection will be closed when you close this app.")
 
 # Close the database connection when the app is closed
 connection.close()
