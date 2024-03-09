@@ -1,3 +1,4 @@
+from st_aggrid import AgGrid, GridOptionsBuilder
 import streamlit as st
 import psycopg2
 import pandas as pd
@@ -16,8 +17,13 @@ connection = psycopg2.connect(
 # Create a Streamlit app
 st.title("AWS RDS Table Viewer")
 
-# Add a text input to enter a table name dynamically
-table_name = st.text_input("Enter a table name:")
+# Get a list of table names from the database
+with connection.cursor() as cursor:
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
+    table_names = [row[0] for row in cursor.fetchall()]
+
+# Create a dropdown for selecting the table name
+table_name = st.selectbox("Select a table:", table_names)
 
 selected_fields = []
 
@@ -37,10 +43,28 @@ if st.button("Fetch Data"):
         # Create a DataFrame with selected headers
         df = pd.DataFrame(data, columns=selected_fields)
 
-        # Display the data in a larger table
-        st.dataframe(df, height=600)  # Adjust the height as needed
-    else:
-        st.warning("Please enter a table name.")
+        # Display the data using the ag-Grid library
+        gb = GridOptionsBuilder.from_dataframe(df)
+        gb.configure_pagination(paginationAutoPageSize=True)
+        gb.configure_side_bar()
+        gridOptions = gb.build()
+
+        grid_response = AgGrid(
+            df,
+            gridOptions=gridOptions,
+            data_return_mode='AS_INPUT',
+            update_mode='MODEL_CHANGED',
+            fit_columns_on_grid_load=True,
+            height=600,
+            width='100%',
+            reload_data=True
+        )
+
+        data = grid_response['data']
+        selected = grid_response['selected_rows']
+        df = pd.DataFrame(selected)
+
+        st.text("Note: The database connection will be closed when you close this app.")
 
 # Close the database connection when the app is closed
-st.text("Note: The database connection will be closed when you close this app.")
+connection.close()
