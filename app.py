@@ -1,4 +1,3 @@
-from st_aggrid import AgGrid, GridOptionsBuilder
 import streamlit as st
 import psycopg2
 import pandas as pd
@@ -96,17 +95,17 @@ if st.button("Fetch Data"):
                     typbyval,
                     typcategory,
                     CASE typcategory
-                        WHEN 'A' THEN 'Array'
-                        WHEN 'B' THEN 'Base'
-                        WHEN 'C' THEN 'Composite'
-                        WHEN 'D' THEN 'Domain'
-                        WHEN 'E' THEN 'Enum'
-                        WHEN 'P' THEN 'Pseudo'
-                        WHEN 'R' THEN 'Range'
-                        WHEN 'S' THEN 'Special'
-                        WHEN 'U' THEN 'User-defined'
-                        ELSE 'Unknown'
-                    END AS category_description
+                        WHEN 'E' THEN (
+                            SELECT array_agg(enumlabel::text)
+                            FROM pg_enum
+                            WHERE enumtypid = (
+                                SELECT oid
+                                FROM pg_type
+                                WHERE typname = '{object_name}'
+                            )
+                        )
+                        ELSE NULL
+                    END AS enum_values
                 FROM pg_type
                 WHERE typname = '{object_name}'
             """)
@@ -115,14 +114,10 @@ if st.button("Fetch Data"):
         st.write(f"Type Name: {data[0]}")
         st.write(f"Type Length: {data[1]}")
         st.write(f"Type By Value: {data[2]}")
-        st.write(f"Type Category: {data[3]} ({data[4]})")
-        
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT typname, typcategory FROM pg_type WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')")
-            type_data = cursor.fetchall()
+        st.write(f"Type Category: {data[3]}")
 
-        type_df = pd.DataFrame(type_data, columns=["Type Name", "Type Category"])
-        st.dataframe(type_df)
+        if data[4] is not None:
+            st.write(f"Enum Values: {', '.join(data[4])}")
 
     else:
         st.warning("Please select an object type and name.")
